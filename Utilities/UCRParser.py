@@ -1,5 +1,6 @@
 """
-This is a utility class made to convert the UCR datasets into a class that contains the train, test and easy access to values and 
+This is a utility class made to convert the UCR datasets into pytorch dataset classes.
+The use of this module should be importing the read_dataset function which receives the wanted dataset name and resturns a train and a test pytorch dataset.
 """
 
 import os
