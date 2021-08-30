@@ -8,8 +8,13 @@ FAKE_SAMPLE_ALPHA = 0.2 # As set in the article
 
 def create_fake_time_series(sample, fake_alpha=FAKE_SAMPLE_ALPHA):
     fake_sample = list(sample)
+
+    # The number of samples from the series to shuffle
     time_steps_to_shuffle = math.floor(len(sample) * fake_alpha)
+
+    # The indices to shuffle
     indices_to_shuffle = random.sample(range(len(sample)), time_steps_to_shuffle)
+    
     while len(indices_to_shuffle) > 1:
         # Choosing the indices to shuffle (The last one with a random one)
         last_index = indices_to_shuffle.pop() # Decrease the length by 1
