@@ -34,6 +34,9 @@ class Sample(object):
     def label(self):
         return self._label
 
+def get_available_datasets():
+    return os.listdir(UCR_DATASETS_PATH)
+
 def get_single_dataset(path):
     with open(path, "r") as data_file:
         data = data_file.readlines()
@@ -63,6 +66,8 @@ def main():
     train, test = read_dataset("ArrowHead")
     print("The dataset has {} training samples and {} test samples.".format(len(train), len(test)))
     print("The first sample from the training set is {}".format(train[0]))
+    available_datasets = get_available_datasets()
+    print("There are {} available UCR datasets. Which are {}".format(len(available_datasets), ",".join(available_datasets)))
     print("UCRParser module tested successfully!")
 
 if __name__ == "__main__":
