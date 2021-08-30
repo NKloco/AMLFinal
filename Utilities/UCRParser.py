@@ -13,12 +13,25 @@ class UCRDataset(Dataset):
         self._data = data
         self._len = len(data)
 
+        labels = []
+        for time_sample in data:
+            if time_sample.label not in labels:
+                labels.apppend(time_sample.label)
+        
+        self._labels = labels
+        self._num_of_labels = len(self._labels)
+
+
     def __getitem__(self, idx):
         sample = self._data[idx]
         return sample.data, sample.label
 
     def __len__(self):
         return self._len
+    
+    @property
+    def number_of_labels(self):
+        return self._num_of_labels
 
 class Sample(object):
     def __init__(self, sample_text):
