@@ -1,5 +1,6 @@
 """
-Originally taken from https://github.com/zalandoresearch/pytorch-dilated-rnn/blob/master/drnn.py
+Originally taken from
+https://github.com/zalandoresearch/pytorch-dilated-rnn/blob/master/drnn.py
 Implements a pytorch dilated RNN module.
 """
 
@@ -12,7 +13,8 @@ use_cuda = torch.cuda.is_available()
 
 class DRNN(nn.Module):
 
-    def __init__(self, n_input, n_hidden, n_layers, dropout=0, cell_type='GRU', batch_first=False, dilations=None):
+    def __init__(self, n_input, n_hidden, n_layers, dropout=0,
+                 cell_type='GRU', batch_first=False, dilations=None):
         super(DRNN, self).__init__()
 
         if dilations is None:
@@ -51,7 +53,10 @@ class DRNN(nn.Module):
             if hidden is None:
                 inputs, _ = self.drnn_layer(cell, inputs, dilation)
             else:
-                inputs, hidden[i] = self.drnn_layer(cell, inputs, dilation, hidden[i])
+                inputs, hidden[i] = self.drnn_layer(cell,
+                                                    inputs,
+                                                    dilation,
+                                                    hidden[i])
 
             outputs.append(inputs[-dilation:])
 
@@ -68,23 +73,30 @@ class DRNN(nn.Module):
         dilated_inputs = self._prepare_inputs(inputs, rate)
 
         if hidden is None:
-            dilated_outputs, hidden = self._apply_cell(dilated_inputs, cell, batch_size, rate, hidden_size)
+            dilated_outputs, hidden = self._apply_cell(dilated_inputs, cell,
+                                                       batch_size, rate,
+                                                       hidden_size)
         else:
             hidden = self._prepare_inputs(hidden, rate)
-            dilated_outputs, hidden = self._apply_cell(dilated_inputs, cell, batch_size, rate, hidden_size, hidden=hidden)
+            dilated_outputs, hidden = self._apply_cell(dilated_inputs, cell,
+                                                       batch_size, rate,
+                                                       hidden_size,
+                                                       hidden=hidden)
 
         splitted_outputs = self._split_outputs(dilated_outputs, rate)
         outputs = self._unpad_outputs(splitted_outputs, n_steps)
 
         return outputs, hidden
 
-    def _apply_cell(self, dilated_inputs, cell, batch_size, rate, hidden_size, hidden=None):
+    def _apply_cell(self, dilated_inputs, cell, batch_size, rate,
+                    hidden_size, hidden=None):
         if hidden is None:
             if self.cell_type == 'LSTM':
                 c, m = self.init_hidden(batch_size * rate, hidden_size)
                 hidden = (c.unsqueeze(0), m.unsqueeze(0))
             else:
-                hidden = self.init_hidden(batch_size * rate, hidden_size).unsqueeze(0)
+                hidden = self.init_hidden(
+                    batch_size * rate, hidden_size).unsqueeze(0)
 
         dilated_outputs, hidden = cell(dilated_inputs, hidden)
 
@@ -96,7 +108,8 @@ class DRNN(nn.Module):
     def _split_outputs(self, dilated_outputs, rate):
         batchsize = dilated_outputs.size(1) // rate
 
-        blocks = [dilated_outputs[:, i * batchsize: (i + 1) * batchsize, :] for i in range(rate)]
+        blocks = [dilated_outputs[
+            :, i * batchsize: (i + 1) * batchsize, :] for i in range(rate)]
 
         interleaved = torch.stack((blocks)).transpose(1, 0).contiguous()
         interleaved = interleaved.view(dilated_outputs.size(0) * rate,
@@ -123,7 +136,8 @@ class DRNN(nn.Module):
         return inputs, dilated_steps
 
     def _prepare_inputs(self, inputs, rate):
-        dilated_inputs = torch.cat([inputs[j::rate, :, :] for j in range(rate)], 1)
+        dilated_inputs = torch.cat(
+            [inputs[j::rate, :, :] for j in range(rate)], 1)
         return dilated_inputs
 
     def init_hidden(self, batch_size, hidden_dim):
