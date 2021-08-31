@@ -8,6 +8,28 @@ import random
 FAKE_SAMPLE_ALPHA = 0.2  # As set in the article
 
 
+class DTCRConfig(object):
+    """
+    This class shall hold the information required by a DTCRModel.
+    """
+    batch_size = None
+    hidden_size = [100, 50, 50]
+    dilations = [1, 4, 16]
+    num_steps = None
+    embedding_size = None
+    learning_rate = 5e-3
+    cell_type = 'GRU'
+    coefficient_lambda = 1
+    class_num = None
+    de_noising = True
+    sample_loss = True
+
+
+class DTCRModel(object):
+    def __init__(self, config):
+        pass
+
+
 def create_fake_time_series(sample, fake_alpha=FAKE_SAMPLE_ALPHA):
     fake_sample = list(sample)
 
