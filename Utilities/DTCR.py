@@ -37,7 +37,7 @@ class DTCRModel(object):
         """
         Generates the encoder of the DTCR model.
         """
-        encoder = DRNN(self._config.num_step, self._config.hidden_size,
+        encoder = DRNN(self._config.num_steps, self._config.hidden_size,
                        len(self._config.hidden_size),
                        cell_type=self._config.cell_type,
                        dilations=self._config.dilations)

@@ -39,9 +39,9 @@ class DRNN(nn.Module):
 
         for i in range(n_layers):
             if i == 0:
-                c = cell(n_input, n_hidden, dropout=dropout)
+                c = cell(n_input, n_hidden[i], dropout=dropout)
             else:
-                c = cell(n_hidden, n_hidden, dropout=dropout)
+                c = cell(n_hidden[i-1], n_hidden[i], dropout=dropout)
             layers.append(c)
         self.cells = nn.Sequential(*layers)
 
