@@ -20,7 +20,7 @@ class UCRDataset(Dataset):
         labels = []
         for time_sample in data:
             if time_sample.label not in labels:
-                labels.apppend(time_sample.label)
+                labels.append(time_sample.label)
 
         self._labels = labels
         self._num_of_labels = len(self._labels)
