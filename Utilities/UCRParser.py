@@ -7,6 +7,8 @@ dataset.
 """
 
 import os
+import torch
+
 from torch.utils.data import Dataset
 
 UCR_DATASETS_PATH = "UCRDatasets"
@@ -45,7 +47,7 @@ class Sample(object):
 
     @property
     def data(self):
-        return self._sample_data
+        return torch.tensor(self._sample_data)
 
     @property
     def label(self):
