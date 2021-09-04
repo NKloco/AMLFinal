@@ -27,6 +27,18 @@ class DTCRConfig(object):
 
 class DTCRModel(object):
     def __init__(self, config):
+        self._config = config
+        self._encoder = self._generate_encoder()
+        self._decoder = self._generate_decoder()
+        self._classifier = self._generate_classifier()
+    
+    def _generate_encoder(self):
+        pass
+
+    def _generate_decoder(self):
+        pass
+
+    def _generate_classifier(self):
         pass
 
 
