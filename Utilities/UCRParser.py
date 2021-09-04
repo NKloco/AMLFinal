@@ -43,7 +43,7 @@ class Sample(object):
     def __init__(self, sample_text):
         data = sample_text.split(",")
         self._label = int(data[0])
-        self._sample_data = [float(sample) for sample in data[1:]]
+        self._sample_data = [[float(sample)] for sample in data[1:]]
 
     @property
     def data(self):

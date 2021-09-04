@@ -14,6 +14,7 @@ class DTCRConfig(object):
     This class shall hold the information required by a DTCRModel.
     """
     batch_size = None
+    input_size = None
     hidden_size = [100, 50, 50]
     dilations = [1, 4, 16]
     num_steps = None
@@ -37,9 +38,10 @@ class DTCRModel(object):
         """
         Generates the encoder of the DTCR model.
         """
-        encoder = DRNN(self._config.num_steps, self._config.hidden_size,
+        encoder = DRNN(self._config.input_size, self._config.hidden_size,
                        len(self._config.hidden_size),
                        cell_type=self._config.cell_type,
+                       batch_first=True,
                        dilations=self._config.dilations)
 
         return encoder
