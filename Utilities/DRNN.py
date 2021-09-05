@@ -151,3 +151,48 @@ class DRNN(nn.Module):
             return (hidden, memory)
         else:
             return hidden
+
+
+class BidirectionalDRNN(nn.Module):
+    """
+    Class that trains 2 DRNNs simultaneously, one regularly and one
+    with reversed inputs to make a bidirectional DRNN.
+    """
+    def __init__(self, n_input, n_hidden, n_layers, dropout=0,
+                 cell_type='GRU', batch_first=False, dilations=None):
+        super(BidirectionalDRNN, self).__init__()
+        self._number_of_layers = n_layers
+
+        self._regular_drnn = DRNN(n_input, n_hidden, n_layers, dropout=dropout,
+                                  cell_type=cell_type, batch_first=batch_first,
+                                  dilations=dilations)
+
+        self._backwards_drnn = DRNN(n_input, n_hidden, n_layers,
+                                    dropout=dropout, cell_type=cell_type,
+                                    batch_first=batch_first,
+                                    dilations=dilations)
+
+    def forward(self, inputs, hidden=None):
+        # Previous hidden is a combined hidden layers of the forward and
+        # backwards hidden
+        if hidden is None:
+            regular_hidden = None
+            backwards_hidden = None
+        else:
+            regular_hidden = hidden[:self._number_of_layers]
+            backwards_hidden = hidden[self._number_of_layers:]
+
+        regular_outputs, regular_hidden = \
+            self._regular_drnn.forward(inputs, regular_hidden)
+
+        reversed_inputs = self._reverse_inputs(inputs)
+        backwards_outputs, backwards_hidden = \
+            self._backwards_drnn.forward(reversed_inputs, backwards_hidden)
+
+        combined_outputs = torch.cat(
+            (regular_outputs, backwards_outputs), dim=2)
+
+        return combined_outputs, regular_hidden + backwards_hidden
+
+    def _reverse_inputs(self, inputs):
+        return torch.flip(inputs, dims=[1])

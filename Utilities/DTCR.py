@@ -4,7 +4,7 @@ the deep temporal clustering representation(DTCR) algorithm.
 """
 import math
 import random
-from Utilities.DRNN import DRNN
+from Utilities.DRNN import BidirectionalDRNN
 
 FAKE_SAMPLE_ALPHA = 0.2  # As set in the article
 
@@ -38,11 +38,13 @@ class DTCRModel(object):
         """
         Generates the encoder of the DTCR model.
         """
-        encoder = DRNN(self._config.input_size, self._config.hidden_size,
-                       len(self._config.hidden_size),
-                       cell_type=self._config.cell_type,
-                       batch_first=True,
-                       dilations=self._config.dilations)
+        encoder = \
+            BidirectionalDRNN(self._config.input_size,
+                              self._config.hidden_size,
+                              len(self._config.hidden_size),
+                              cell_type=self._config.cell_type,
+                              batch_first=True,
+                              dilations=self._config.dilations)
 
         return encoder
 
