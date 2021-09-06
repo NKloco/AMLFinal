@@ -4,6 +4,7 @@ the deep temporal clustering representation(DTCR) algorithm.
 """
 import math
 import random
+import torch.nn as nn
 from Utilities.DRNN import BidirectionalDRNN
 
 FAKE_SAMPLE_ALPHA = 0.2  # As set in the article
@@ -20,7 +21,8 @@ class DTCRConfig(object):
     num_steps = None
     embedding_size = None
     learning_rate = 5e-3
-    cell_type = 'GRU'
+    encoder_cell_type = 'GRU'
+    decoder_cell_type = 'GRU'
     coefficient_lambda = 1
     class_num = None
     de_noising = True
@@ -37,12 +39,13 @@ class DTCRModel(object):
     def _generate_encoder(self):
         """
         Generates the encoder of the DTCR model.
+        The decoder is a bi-directional dilated RNN.
         """
         encoder = \
             BidirectionalDRNN(self._config.input_size,
                               self._config.hidden_size,
                               len(self._config.hidden_size),
-                              cell_type=self._config.cell_type,
+                              cell_type=self._config.encoder_cell_type,
                               batch_first=True,
                               dilations=self._config.dilations)
 
@@ -53,7 +56,16 @@ class DTCRModel(object):
         return self._encoder
 
     def _generate_decoder(self):
-        pass
+        if self._config.decoder_cell_type == "GRU":
+            cell = nn.GRU
+        elif self._config.decoder_cell_type == "RNN":
+            cell = nn.RNN
+        elif self._config.decoder_cell_type == "LSTM":
+            cell = nn.LSTM
+        else:
+            raise NotImplementedError
+
+        number_of_layers = sum(self._config.hidden_size) * 2
 
     def _generate_classifier(self):
         pass
