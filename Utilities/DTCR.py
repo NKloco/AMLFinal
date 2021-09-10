@@ -65,7 +65,14 @@ class DTCRModel(object):
         else:
             raise NotImplementedError
 
-        number_of_layers = sum(self._config.hidden_size) * 2
+        number_of_units = sum(self._config.hidden_size) * 2
+
+        decoder = cell(number_of_units, number_of_units, dropout=0)
+        return decoder
+
+    @property
+    def decoder(self):
+        return self._decoder
 
     def _generate_classifier(self):
         pass
