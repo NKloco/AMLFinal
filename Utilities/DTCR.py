@@ -4,6 +4,7 @@ the deep temporal clustering representation(DTCR) algorithm.
 """
 import math
 import random
+import torch
 import torch.nn as nn
 from Utilities.DRNN import BidirectionalDRNN
 
@@ -56,6 +57,50 @@ class DTCRModel(object):
         return self._encoder
 
     def _generate_decoder(self):
+        decoder = DTCRDecoder(self._config)
+        return decoder
+
+    @property
+    def decoder(self):
+        return self._decoder
+
+    def _generate_classifier(self):
+        pass
+
+    def get_latent_representation(self, hidden_output):
+        latent_space_last_hidden_outputs = []
+        for layer_output_tensor in hidden_output:
+            # The inputs are padded so that there's exactly enough
+            # time steps for a full dilation, since that padding
+            # happens, we need to take the modulo of the steps from
+            # the hidden outputs.
+            last_hidden = layer_output_tensor.select(
+                0, self._config.num_steps % layer_output_tensor.shape[0])
+
+            latent_space_last_hidden_outputs.append(last_hidden)
+
+        return torch.cat(latent_space_last_hidden_outputs, dim=1)
+
+    def prepare_representation_for_reconstruction(self, representation):
+        new_rep = representation.repeat(self._config.num_steps, 1, 1)
+        return torch.transpose(new_rep, 0, 1)  # We want the batch to be first
+
+    def train(self, inputs):
+        # For now the I skip the classifier's loss
+        # fake_samples = create_fake_time_series(inputs)
+
+        _, hidden_outputs = self.encoder.forward(inputs)
+        latent_representation = self.get_latent_representation(hidden_outputs)
+
+        reconstructed_inputs = self._decoder.forward(latent_representation)
+        return latent_representation
+
+
+class DTCRDecoder(nn.Module):
+    def __init__(self, config):
+        super(DTCRDecoder, self).__init__()
+        self._config = config
+
         if self._config.decoder_cell_type == "GRU":
             cell = nn.GRU
         elif self._config.decoder_cell_type == "RNN":
@@ -67,15 +112,17 @@ class DTCRModel(object):
 
         number_of_units = sum(self._config.hidden_size) * 2
 
-        decoder = cell(number_of_units, number_of_units, dropout=0)
-        return decoder
+        self._rnn = cell(number_of_units, number_of_units,
+                         dropout=0, batch_first=True)
 
-    @property
-    def decoder(self):
-        return self._decoder
+        self._linear = nn.Linear(number_of_units, self._config.input_size)
 
-    def _generate_classifier(self):
-        pass
+    def forward(self, inputs, hidden=None):
+        out, _ = self._rnn(inputs, hidden)
+        out = out[:, -1, :]  # Taking the last time step of the RNN
+
+        out = self._linear(out)
+        return out
 
 
 def create_fake_time_series(sample, fake_alpha=FAKE_SAMPLE_ALPHA):
