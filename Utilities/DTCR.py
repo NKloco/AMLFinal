@@ -30,8 +30,10 @@ class DTCRConfig(object):
     sample_loss = True
 
 
-class DTCRModel(object):
+class DTCRModel(nn.Module):
     def __init__(self, config):
+        super(DTCRModel, self).__init__()
+
         self._config = config
         self._encoder = self._generate_encoder()
         self._decoder = self._generate_decoder()
@@ -85,6 +87,21 @@ class DTCRModel(object):
         new_rep = representation.repeat(self._config.num_steps, 1, 1)
         return torch.transpose(new_rep, 0, 1)  # We want the batch to be first
 
+    def forward(self, inputs):
+        # Input of shape (Batch, Time Steps, Single step size)
+
+        _, hidden_outputs = self.encoder(inputs)
+        # hidden_outputs: list of length of layers * directions (6)
+        # each item of shape (dilation, batch, hidden size)
+
+        latent_repr = self.get_latent_representation(hidden_outputs)
+        # latent_repr: (batch, latent_space_size)
+
+        prep_for_decoder = latent_repr.repeat(1, 1, 1).transpose(0, 1)
+        reconstructed_inputs = self.decoder(prep_for_decoder)
+
+        return inputs, latent_repr, reconstructed_inputs
+
     def train(self, inputs):
         # For now the I skip the classifier's loss
         # fake_samples = create_fake_time_series(inputs)
@@ -110,19 +127,35 @@ class DTCRDecoder(nn.Module):
         else:
             raise NotImplementedError
 
-        number_of_units = sum(self._config.hidden_size) * 2
+        self._number_of_units = sum(self._config.hidden_size) * 2
 
-        self._rnn = cell(number_of_units, number_of_units,
+        self._rnn = cell(self._number_of_units, self._number_of_units,
                          dropout=0, batch_first=True)
 
-        self._linear = nn.Linear(number_of_units, self._config.input_size)
+        self._linear = nn.Linear(self._number_of_units,
+                                 self._config.input_size)
 
-    def forward(self, inputs, hidden=None):
-        out, _ = self._rnn(inputs, hidden)
-        out = out[:, -1, :]  # Taking the last time step of the RNN
+    def forward(self, inputs, hidden=None, predict_length=None):
+        if predict_length is None:
+            predict_length = self._config.num_steps
 
-        out = self._linear(out)
-        return out
+        if hidden is None:
+            batch_size = inputs.shape[0]
+
+            # Hidden is of (layers, batch_size, hidden_units)
+            hidden = torch.zeros(1, batch_size, self._number_of_units,
+                                 dtype=torch.float32)
+
+        outputs = []
+        rnn_out = inputs
+        for _ in range(predict_length):
+            rnn_out, hidden = self._rnn(rnn_out, hidden)
+            out = self._linear(rnn_out)
+
+            outputs.append(out)
+
+        reconstructed_inputs = torch.cat(outputs, dim=1)
+        return reconstructed_inputs
 
 
 def create_fake_time_series(sample, fake_alpha=FAKE_SAMPLE_ALPHA):
