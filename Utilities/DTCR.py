@@ -81,14 +81,12 @@ class DTCRModel(nn.Module):
 
             latent_space_last_hidden_outputs.append(last_hidden)
 
+        # There are 6 layers (3 layers for each direction), which we
+        # combine for the latent representation
         return torch.cat(latent_space_last_hidden_outputs, dim=1)
 
-    def prepare_representation_for_reconstruction(self, representation):
-        new_rep = representation.repeat(self._config.num_steps, 1, 1)
-        return torch.transpose(new_rep, 0, 1)  # We want the batch to be first
-
     def forward(self, inputs):
-        # Input of shape (Batch, Time Steps, Single step size)
+        # inputs of shape (Batch, Time Steps, Single step size)
 
         _, hidden_outputs = self.encoder(inputs)
         # hidden_outputs: list of length of layers * directions (6)
@@ -98,7 +96,10 @@ class DTCRModel(nn.Module):
         # latent_repr: (batch, latent_space_size)
 
         prep_for_decoder = latent_repr.repeat(1, 1, 1).transpose(0, 1)
+        # prep_for_decoder: (batch, time steps [1], input size)
+
         reconstructed_inputs = self.decoder(prep_for_decoder)
+        # reconstructed_inputs have the same shape as the input
 
         return inputs, latent_repr, reconstructed_inputs
 
@@ -143,19 +144,18 @@ class DTCRDecoder(nn.Module):
             batch_size = inputs.shape[0]
 
             # Hidden is of (layers, batch_size, hidden_units)
-            hidden = torch.zeros(1, batch_size, self._number_of_units,
-                                 dtype=torch.float32)
+            hidden = torch.zeros(1, batch_size, self._number_of_units)
 
-        outputs = []
+        series_prediction = []
         rnn_out = inputs
         for _ in range(predict_length):
             rnn_out, hidden = self._rnn(rnn_out, hidden)
-            out = self._linear(rnn_out)
+            step_prediction = self._linear(rnn_out)
 
-            outputs.append(out)
+            series_prediction.append(step_prediction)
 
-        reconstructed_inputs = torch.cat(outputs, dim=1)
-        return reconstructed_inputs
+        predicted_series = torch.cat(series_prediction, dim=1)
+        return predicted_series
 
 
 def create_fake_time_series(sample, fake_alpha=FAKE_SAMPLE_ALPHA):
