@@ -111,7 +111,7 @@ class DTCRModel(nn.Module):
         fake_latent_repr = self.get_latent_representation(fake_hidden_outputs)
 
         # The classifier checks if the representation is fake, so if it's fake
-        # the prediction should be 1, and if it's real 0
+        # the prediction should be 1, and if it's real it should be 0
         real_repr_with_labels = [sample for sample in
                                  zip(latent_repr, [0]*len(latent_repr))]
 
@@ -137,7 +137,7 @@ class DTCRModel(nn.Module):
 
         _, hidden_outputs = self.encoder(inputs)
         # hidden_outputs: list of length of layers * directions (6)
-        # each item of shape (dilation, batch, hidden size)
+        # each item of shape (dilation, batch, hidden size of layer)
 
         latent_repr = self.get_latent_representation(hidden_outputs)
         # latent_repr: (batch, latent_space_size)
@@ -145,14 +145,15 @@ class DTCRModel(nn.Module):
         prep_for_decoder = latent_repr.repeat(1, 1, 1).transpose(0, 1)
         # prep_for_decoder: (batch, time steps [1], input size)
 
-        reconstructed_inputs = self.decoder(prep_for_decoder)
+        reconstructed_inputs = self.decoder(prep_for_decoder,
+                                            hidden=latent_repr.repeat(1, 1, 1))
         # reconstructed_inputs have the same shape as the input
 
         classified_outputs = self.classify_forward(inputs, latent_repr)
 
         return inputs, latent_repr, reconstructed_inputs, classified_outputs
 
-    def train(self, train_dl, test_dl):
+    def train_step(self, train_dl, test_dl):
         # Going over the batches
         print_interval = self._config.training_printing_interval
         running_loss = 0.0
@@ -164,6 +165,7 @@ class DTCRModel(nn.Module):
         optimizer = self._config.optimizer(self.parameters(),
                                            eps=self._config.learning_rate)
 
+        self.train(mode=True)
         for index, (sample_data, sample_label) in enumerate(train_dl):
             optimizer.zero_grad()
 
@@ -188,6 +190,8 @@ class DTCRModel(nn.Module):
                 running_loss = 0.0
                 running_classify_loss = 0.0
                 running_recons_loss = 0.0
+
+        self.train(mode=False)
 
 
 class DTCRDecoder(nn.Module):
