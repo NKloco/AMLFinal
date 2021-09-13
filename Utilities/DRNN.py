@@ -163,8 +163,9 @@ class BidirectionalDRNN(nn.Module):
         super(BidirectionalDRNN, self).__init__()
         self._number_of_layers = n_layers
 
-        self._regular_drnn = DRNN(n_input, n_hidden, n_layers, dropout=dropout,
-                                  cell_type=cell_type, batch_first=batch_first,
+        self._regular_drnn = DRNN(n_input, n_hidden, n_layers,
+                                  dropout=dropout, cell_type=cell_type,
+                                  batch_first=batch_first,
                                   dilations=dilations)
 
         self._backwards_drnn = DRNN(n_input, n_hidden, n_layers,

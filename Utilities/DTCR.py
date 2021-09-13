@@ -15,19 +15,30 @@ class DTCRConfig(object):
     """
     This class shall hold the information required by a DTCRModel.
     """
+    # General Settings
+    input_size = None  # Size of single step in the time series
     batch_size = None
-    input_size = None
-    hidden_size = [100, 50, 50]
-    dilations = [1, 4, 16]
-    num_steps = None
-    embedding_size = None
+    num_steps = None  # Length of the time series
+    class_num = None  # Number of different labels
     learning_rate = 5e-3
-    encoder_cell_type = 'GRU'
-    decoder_cell_type = 'GRU'
     coefficient_lambda = 1
-    class_num = None
     de_noising = True
     sample_loss = True
+    training_printing_interval = 5
+    optimizer = torch.optim.Adam
+
+    # Encoder Settings
+    hidden_size = [100, 50, 50]
+    dilations = [1, 4, 16]
+    encoder_cell_type = 'GRU'
+
+    # Decoder Settings
+    decoder_cell_type = 'GRU'
+    decoding_criterion = nn.MSELoss
+
+    # Classifier Settings
+    classifier_nodes = 128
+    classifier_criterion = nn.CrossEntropyLoss
 
 
 class DTCRModel(nn.Module):
@@ -67,7 +78,15 @@ class DTCRModel(nn.Module):
         return self._decoder
 
     def _generate_classifier(self):
-        pass
+        latent_space_size = sum(self._config.hidden_size) * 2
+        classifier = nn.Sequential(
+            nn.Linear(latent_space_size, self._config.classifier_nodes),
+            nn.ReLU(),
+            nn.Linear(self._config.classifier_nodes, 2),
+            nn.Softmax(dim=1)
+        )
+
+        return classifier
 
     def get_latent_representation(self, hidden_output):
         latent_space_last_hidden_outputs = []
@@ -85,6 +104,34 @@ class DTCRModel(nn.Module):
         # combine for the latent representation
         return torch.cat(latent_space_last_hidden_outputs, dim=1)
 
+    def classify_forward(self, inputs, latent_repr):
+        # Creating fake representations
+        fake_inputs = create_fake_samples(inputs)
+        _, fake_hidden_outputs = self.encoder(fake_inputs)
+        fake_latent_repr = self.get_latent_representation(fake_hidden_outputs)
+
+        # The classifier checks if the representation is fake, so if it's fake
+        # the prediction should be 1, and if it's real 0
+        real_repr_with_labels = [sample for sample in
+                                 zip(latent_repr, [0]*len(latent_repr))]
+
+        fake_repr_with_labels = [sample for sample in
+                                 zip(fake_latent_repr,
+                                     [1]*len(fake_latent_repr))]
+
+        classifier_inputs = real_repr_with_labels + fake_repr_with_labels
+
+        random.shuffle(classifier_inputs)
+        combined_samples = torch.stack(
+            [sample for sample, _ in classifier_inputs])
+        combined_labels = torch.tensor(
+            [label for _, label in classifier_inputs])
+
+        classified_labels = self._classifier(combined_samples)
+
+        classified_outputs = (classified_labels, combined_labels)
+        return classified_outputs
+
     def forward(self, inputs):
         # inputs of shape (Batch, Time Steps, Single step size)
 
@@ -101,17 +148,46 @@ class DTCRModel(nn.Module):
         reconstructed_inputs = self.decoder(prep_for_decoder)
         # reconstructed_inputs have the same shape as the input
 
-        return inputs, latent_repr, reconstructed_inputs
+        classified_outputs = self.classify_forward(inputs, latent_repr)
 
-    def train(self, inputs):
-        # For now the I skip the classifier's loss
-        # fake_samples = create_fake_time_series(inputs)
+        return inputs, latent_repr, reconstructed_inputs, classified_outputs
 
-        _, hidden_outputs = self.encoder.forward(inputs)
-        latent_representation = self.get_latent_representation(hidden_outputs)
+    def train(self, train_dl, test_dl):
+        # Going over the batches
+        print_interval = self._config.training_printing_interval
+        running_loss = 0.0
+        running_recons_loss = 0.0
+        running_classify_loss = 0.0
 
-        reconstructed_inputs = self._decoder.forward(latent_representation)
-        return latent_representation
+        recons_criterion = self._config.decoding_criterion()
+        classify_criterion = self._config.classifier_criterion()
+        optimizer = self._config.optimizer(self.parameters(),
+                                           eps=self._config.learning_rate)
+
+        for index, (sample_data, sample_label) in enumerate(train_dl):
+            optimizer.zero_grad()
+
+            inputs, latent_repr, reconstructed_inputs, classified_outputs =\
+                self(sample_data)
+
+            recons_loss = recons_criterion(reconstructed_inputs, inputs)
+            classify_loss = classify_criterion(*classified_outputs)
+
+            running_recons_loss += recons_loss.item()
+            running_classify_loss += classify_loss.item()
+            dtcr_loss = recons_loss + classify_loss
+            dtcr_loss.backward()
+            optimizer.step()
+
+            running_loss += dtcr_loss.item()
+            if index % print_interval == print_interval - 1:
+                print('[{}] loss: {}, classify: {}, recons: {}'.format(
+                    index + 1, running_loss / print_interval,
+                    running_classify_loss / print_interval,
+                    running_recons_loss / print_interval))
+                running_loss = 0.0
+                running_classify_loss = 0.0
+                running_recons_loss = 0.0
 
 
 class DTCRDecoder(nn.Module):
@@ -158,14 +234,11 @@ class DTCRDecoder(nn.Module):
         return predicted_series
 
 
-def create_fake_time_series(sample, fake_alpha=FAKE_SAMPLE_ALPHA):
-    fake_sample = list(sample)
-
-    # The number of samples from the series to shuffle
-    time_steps_to_shuffle = math.floor(len(sample) * fake_alpha)
+def create_fake_sample(sample, time_steps_to_shuffle):
+    fake_sample = torch.clone(sample)
 
     # The indices to shuffle
-    indices_to_shuffle = random.sample(range(len(sample)),
+    indices_to_shuffle = random.sample(range(fake_sample.shape[1]),
                                        time_steps_to_shuffle)
 
     while len(indices_to_shuffle) > 1:
@@ -175,30 +248,32 @@ def create_fake_time_series(sample, fake_alpha=FAKE_SAMPLE_ALPHA):
             random.randint(0, len(indices_to_shuffle) - 1)]
 
         # Swapping the items
-        swap_temp = fake_sample[last_index]
-        fake_sample[last_index] = fake_sample[random_index_to_swap]
-        fake_sample[random_index_to_swap] = swap_temp
+        swap_temp = torch.index_select(
+            fake_sample, 1, torch.tensor(last_index))
+
+        fake_sample[0, last_index] = torch.index_select(
+            fake_sample, 1, torch.tensor(random_index_to_swap))
+
+        fake_sample[0, random_index_to_swap] = swap_temp
 
     return fake_sample
 
 
+def create_fake_samples(samples, fake_alpha=FAKE_SAMPLE_ALPHA):
+    fake_samples = []
+
+    # samples of shape [batch, time steps, single step]
+    for single_sample in torch.split(samples, 1):
+        # The number of samples from the series to shuffle
+        time_steps_to_shuffle = math.floor(len(single_sample) * fake_alpha)
+        fake_samples.append(
+            create_fake_sample(single_sample, time_steps_to_shuffle))
+
+    return torch.cat(fake_samples)
+
+
 def main():
     print("Testing the DTCR functionality...")
-    # Creating a sample with 1000 values to check the fake
-    # sampling functionality.
-    sample = range(1000)
-    fake_sample = create_fake_time_series(sample)
-
-    shuffled_count = 0
-
-    for index in range(len(sample)):
-        if sample[index] != fake_sample[index]:
-            shuffled_count += 1
-
-    print("For a sample of length {}, there were {} shuffles".format(
-        len(sample), shuffled_count))
-    print("Which is {} of the series.".format(shuffled_count/len(sample)))
-
     print("DTCR functionality finished testing.")
 
 
