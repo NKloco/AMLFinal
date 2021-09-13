@@ -20,7 +20,7 @@ class DTCRConfig(object):
     batch_size = None
     num_steps = None  # Length of the time series
     class_num = None  # Number of different labels
-    learning_rate = 5e-3
+    learning_rate = 5e-8
     coefficient_lambda = 1
     de_noising = True
     sample_loss = True
@@ -108,23 +108,24 @@ class DTCRModel(nn.Module):
         # Creating fake representations
         fake_inputs = create_fake_samples(inputs)
         _, fake_hidden_outputs = self.encoder(fake_inputs)
-        fake_latent_repr = self.get_latent_representation(fake_hidden_outputs)
+        fake_repr = self.get_latent_representation(fake_hidden_outputs)
 
         # The classifier checks if the representation is fake, so if it's fake
         # the prediction should be 1, and if it's real it should be 0
         real_repr_with_labels = [sample for sample in
-                                 zip(latent_repr, [0]*len(latent_repr))]
+                                 zip(latent_repr,
+                                     [torch.tensor([1, 0])]*len(latent_repr))]
 
         fake_repr_with_labels = [sample for sample in
-                                 zip(fake_latent_repr,
-                                     [1]*len(fake_latent_repr))]
+                                 zip(fake_repr,
+                                     [torch.tensor([0, 1])]*len(fake_repr))]
 
         classifier_inputs = real_repr_with_labels + fake_repr_with_labels
 
         random.shuffle(classifier_inputs)
         combined_samples = torch.stack(
             [sample for sample, _ in classifier_inputs])
-        combined_labels = torch.tensor(
+        combined_labels = torch.stack(
             [label for _, label in classifier_inputs])
 
         classified_labels = self._classifier(combined_samples)
@@ -173,7 +174,9 @@ class DTCRModel(nn.Module):
                 self(sample_data)
 
             recons_loss = recons_criterion(reconstructed_inputs, inputs)
-            classify_loss = classify_criterion(*classified_outputs)
+            classify_loss = classify_criterion(
+                classified_outputs[0],
+                torch.max(classified_outputs[1], 1)[1])
 
             running_recons_loss += recons_loss.item()
             running_classify_loss += classify_loss.item()
