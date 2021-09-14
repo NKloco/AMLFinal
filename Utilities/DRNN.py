@@ -162,12 +162,14 @@ class BidirectionalDRNN(nn.Module):
         backwards_outputs, backwards_hidden = \
             self._backwards_drnn.forward(reversed_inputs, backwards_hidden)
 
+        backwards_outputs = backwards_outputs[-1]
+
         # We want the outputs to concatenate the same sample's outputs
         # so we need to reverse the outputs of the backwards network
         backwards_outputs_reversed = self._reverse_inputs(backwards_outputs)
 
         combined_outputs = torch.cat(
-            (regular_outputs, backwards_outputs_reversed), dim=2)
+            (regular_outputs[-1], backwards_outputs_reversed[-1]), dim=2)
 
         return combined_outputs, regular_hidden + backwards_hidden
 
