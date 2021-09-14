@@ -8,149 +8,121 @@ import torch
 import torch.nn as nn
 
 
-use_cuda = torch.cuda.is_available()
-
-
 class DRNN(nn.Module):
-
-    def __init__(self, n_input, n_hidden, n_layers, dropout=0,
-                 cell_type='GRU', batch_first=False, dilations=None):
+    def __init__(self, n_input, layers, dilations=None, cell_type='GRU',
+                 **kwargs):  # kwargs are additional arguments for rnn
         super(DRNN, self).__init__()
+        self._cell_type = cell_type
+        self._n_layers = layers
 
         if dilations is None:
-            self.dilations = [2 ** i for i in range(n_layers)]
-        elif len(dilations) != n_layers:
+            self._dilations = [2 ** i for i in range(len(self._n_layers))]
+        elif len(dilations) != len(self._n_layers):
             raise ValueError
         else:
-            self.dilations = dilations
+            self._dilations = dilations
 
-        self.cell_type = cell_type
-        self.batch_first = batch_first
-
-        layers = []
-        if self.cell_type == "GRU":
-            cell = nn.GRU
-        elif self.cell_type == "RNN":
-            cell = nn.RNN
-        elif self.cell_type == "LSTM":
-            cell = nn.LSTM
+        if self._cell_type == "GRU":
+            rnn = nn.GRU
+        elif self._cell_type == "RNN":
+            rnn = nn.RNN
+        elif self._cell_type == "LSTM":
+            rnn = nn.LSTM
         else:
             raise NotImplementedError
 
-        for i in range(n_layers):
-            if i == 0:
-                c = cell(n_input, n_hidden[i], dropout=dropout)
+        rnn_layers = []
+        for layer_index, n_hidden in enumerate(self._n_layers):
+            if layer_index == 0:  # First layer should get input size
+                current_layer = rnn(n_input, n_hidden,
+                                    **kwargs)
             else:
-                c = cell(n_hidden[i-1], n_hidden[i], dropout=dropout)
-            layers.append(c)
-        self.cells = nn.Sequential(*layers)
+                current_layer = rnn(self._n_layers[layer_index - 1], n_hidden,
+                                    **kwargs)
+
+            rnn_layers.append(current_layer)
+
+        # This is so the model could access the layers parameters, if saved
+        # as a list it cannot access them
+        self._layers = nn.Sequential(*rnn_layers)
 
     def forward(self, inputs, hidden=None):
-        if self.batch_first:
-            inputs = inputs.transpose(0, 1)
-        outputs = []
-        for i, (cell, dilation) in enumerate(zip(self.cells, self.dilations)):
-            if hidden is None:
-                inputs, _ = self.drnn_layer(cell, inputs, dilation)
-            else:
-                inputs, hidden[i] = self.drnn_layer(cell,
-                                                    inputs,
-                                                    dilation,
-                                                    hidden[i])
-
-            outputs.append(inputs[-dilation:])
-
-        if self.batch_first:
-            inputs = inputs.transpose(0, 1)
-        return inputs, outputs
-
-    def drnn_layer(self, cell, inputs, rate, hidden=None):
-        n_steps = len(inputs)
-        batch_size = inputs[0].size(0)
-        hidden_size = cell.hidden_size
-
-        inputs, _ = self._pad_inputs(inputs, n_steps, rate)
-        dilated_inputs = self._prepare_inputs(inputs, rate)
+        # inputs: (batch, time steps, input size)
+        # hidden: list of number of layers
+        # each layer is a list of size of the dilation of the layer
+        # and each item is a tensor of size (batch, hidden out)
+        batch_size = inputs.shape[0]
 
         if hidden is None:
-            dilated_outputs, hidden = self._apply_cell(dilated_inputs, cell,
-                                                       batch_size, rate,
-                                                       hidden_size)
-        else:
-            hidden = self._prepare_inputs(hidden, rate)
-            dilated_outputs, hidden = self._apply_cell(dilated_inputs, cell,
-                                                       batch_size, rate,
-                                                       hidden_size,
-                                                       hidden=hidden)
+            hidden = []
+            for n_hidden, dilation in zip(self._n_layers, self._dilations):
+                hidden.append([torch.zeros(1, batch_size, n_hidden)]*dilation)
 
-        splitted_outputs = self._split_outputs(dilated_outputs, rate)
-        outputs = self._unpad_outputs(splitted_outputs, n_steps)
+        network_out = []
+        network_hidden = []
+        rnn_outputs = inputs
+        for rnn_layer, dilation, l_hidden in zip(self._layers,
+                                                 self._dilations,
+                                                 hidden):
+            rnn_outputs, rnn_hidden = self._layer_forward(
+                rnn_layer, rnn_outputs, l_hidden, dilation)
 
-        return outputs, hidden
+            network_out.append(rnn_outputs)
+            network_hidden.append(rnn_hidden)
 
-    def _apply_cell(self, dilated_inputs, cell, batch_size, rate,
-                    hidden_size, hidden=None):
-        if hidden is None:
-            if self.cell_type == 'LSTM':
-                c, m = self.init_hidden(batch_size * rate, hidden_size)
-                hidden = (c.unsqueeze(0), m.unsqueeze(0))
-            else:
-                hidden = self.init_hidden(
-                    batch_size * rate, hidden_size).unsqueeze(0)
+        return network_out, network_hidden
 
-        dilated_outputs, hidden = cell(dilated_inputs, hidden)
+    def _layer_forward(self, rnn_layer, inputs, hidden, dilation):
+        dilated_inputs = self._split_inputs(inputs, dilation)
+        outs = []
+        hiddens = []
+        for dilation_index in range(dilation):
+            current_input = dilated_inputs[dilation_index]
+            current_hidden = hidden[dilation_index]
+            dilation_out, dilation_hidden = rnn_layer(current_input,
+                                                      current_hidden)
+            outs.append(dilation_out)
+            hiddens.append(dilation_hidden)
 
-        return dilated_outputs, hidden
+        # The hiddens aligned to the beginning of the sequence,
+        # according to the dilation we need to rotate it so the last item
+        # will represent the last hidden in the layer
+        sequence_length = inputs.shape[1]
+        rotation = sequence_length % dilation
+        hiddens = hiddens[rotation:] + hiddens[:rotation]
 
-    def _unpad_outputs(self, splitted_outputs, n_steps):
-        return splitted_outputs[:n_steps]
+        # The outputs are a time series output for each dilation
+        # the outputs needs to be ordered again to fit the inputs
+        outs = self._merge_outputs(outs, dilation)
 
-    def _split_outputs(self, dilated_outputs, rate):
-        batchsize = dilated_outputs.size(1) // rate
+        return outs, hiddens
 
-        blocks = [dilated_outputs[
-            :, i * batchsize: (i + 1) * batchsize, :] for i in range(rate)]
+    def _split_inputs(self, inputs, dilation):
+        # inputs of shape (batch, time steps, time step size)
+        split_inputs = []
+        n_time_steps = inputs.shape[1]
 
-        interleaved = torch.stack((blocks)).transpose(1, 0).contiguous()
-        interleaved = interleaved.view(dilated_outputs.size(0) * rate,
-                                       batchsize,
-                                       dilated_outputs.size(2))
-        return interleaved
+        for index in range(dilation):
+            indices = [x for x in range(n_time_steps)[index::dilation]]
+            indices_tensor = torch.tensor(indices)
+            split_inputs.append(torch.index_select(inputs, 1, indices_tensor))
 
-    def _pad_inputs(self, inputs, n_steps, rate):
-        is_even = (n_steps % rate) == 0
+        return split_inputs
 
-        if not is_even:
-            dilated_steps = n_steps // rate + 1
+    def _merge_outputs(self, outs, dilation):
+        # outs: list of tensors of (batch, time steps, time step size)
+        total_time_steps = sum([out.shape[1] for out in outs])
+        batch_size = outs[0].shape[0]
+        time_step_size = outs[0].shape[2]
 
-            zeros_ = torch.zeros(dilated_steps * rate - inputs.size(0),
-                                 inputs.size(1),
-                                 inputs.size(2))
-            if use_cuda:
-                zeros_ = zeros_.cuda()
+        out_tensor = torch.zeros(batch_size, total_time_steps, time_step_size)
 
-            inputs = torch.cat((inputs, zeros_))
-        else:
-            dilated_steps = n_steps // rate
+        for index in range(dilation):
+            indices = [x for x in range(total_time_steps)[index::dilation]]
+            indices_tensor = torch.tensor(indices)
+            out_tensor.index_copy_(1, indices_tensor, outs[index])
 
-        return inputs, dilated_steps
-
-    def _prepare_inputs(self, inputs, rate):
-        dilated_inputs = torch.cat(
-            [inputs[j::rate, :, :] for j in range(rate)], 1)
-        return dilated_inputs
-
-    def init_hidden(self, batch_size, hidden_dim):
-        hidden = torch.zeros(batch_size, hidden_dim)
-        if use_cuda:
-            hidden = hidden.cuda()
-        if self.cell_type == "LSTM":
-            memory = torch.zeros(batch_size, hidden_dim)
-            if use_cuda:
-                memory = memory.cuda()
-            return (hidden, memory)
-        else:
-            return hidden
+        return out_tensor
 
 
 class BidirectionalDRNN(nn.Module):
