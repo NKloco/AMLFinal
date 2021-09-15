@@ -56,7 +56,7 @@ class DTCRModel(nn.Module):
                               dilations=self._config.dilations)
 
         self.decoder = DTCRDecoder(self._config)
-        self.classifier = classifier = nn.Sequential(
+        self.classifier = nn.Sequential(
             nn.Linear(self._latent_space_size, self._config.classifier_nodes),
             nn.ReLU(),
             nn.Linear(self._config.classifier_nodes, 2),
@@ -182,7 +182,6 @@ class DTCRDecoder(nn.Module):
             raise NotImplementedError
 
         self._number_of_units = sum(self._config.hidden_size) * 2
-        self._input_size = self._config.hidden_size[-1] * 2
 
         self._rnn = cell(self._number_of_units, self._number_of_units,
                          dropout=0, batch_first=True)
