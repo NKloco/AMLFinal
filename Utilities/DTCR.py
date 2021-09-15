@@ -20,7 +20,7 @@ class DTCRConfig(object):
     batch_size = None
     num_steps = None  # Length of the time series
     class_num = None  # Number of different labels
-    learning_rate = 5e-8
+    learning_rate = 5e-3
     coefficient_lambda = 1
     de_noising = True
     sample_loss = True
@@ -46,113 +46,22 @@ class DTCRModel(nn.Module):
         super(DTCRModel, self).__init__()
 
         self._config = config
-        self._encoder = self._generate_encoder()
-        self._decoder = self._generate_decoder()
-        self._classifier = self._generate_classifier()
+        self._latent_space_size = sum(self._config.hidden_size) * 2
 
-    def _generate_encoder(self):
-        """
-        Generates the encoder of the DTCR model.
-        The decoder is a bi-directional dilated RNN.
-        """
-        encoder = \
+        self.encoder = \
             BidirectionalDRNN(self._config.input_size,
                               self._config.hidden_size,
-                              len(self._config.hidden_size),
                               cell_type=self._config.encoder_cell_type,
                               batch_first=True,
                               dilations=self._config.dilations)
 
-        return encoder
-
-    @property
-    def encoder(self):
-        return self._encoder
-
-    def _generate_decoder(self):
-        decoder = DTCRDecoder(self._config)
-        return decoder
-
-    @property
-    def decoder(self):
-        return self._decoder
-
-    def _generate_classifier(self):
-        latent_space_size = sum(self._config.hidden_size) * 2
-        classifier = nn.Sequential(
-            nn.Linear(latent_space_size, self._config.classifier_nodes),
+        self.decoder = DTCRDecoder(self._config)
+        self.classifier = classifier = nn.Sequential(
+            nn.Linear(self._latent_space_size, self._config.classifier_nodes),
             nn.ReLU(),
             nn.Linear(self._config.classifier_nodes, 2),
             nn.Softmax(dim=1)
         )
-
-        return classifier
-
-    def get_latent_representation(self, hidden_output):
-        latent_space_last_hidden_outputs = []
-        for layer_output_tensor in hidden_output:
-            # The inputs are padded so that there's exactly enough
-            # time steps for a full dilation, since that padding
-            # happens, we need to take the modulo of the steps from
-            # the hidden outputs.
-            last_hidden = layer_output_tensor.select(
-                0, self._config.num_steps % layer_output_tensor.shape[0])
-
-            latent_space_last_hidden_outputs.append(last_hidden)
-
-        # There are 6 layers (3 layers for each direction), which we
-        # combine for the latent representation
-        return torch.cat(latent_space_last_hidden_outputs, dim=1)
-
-    def classify_forward(self, inputs, latent_repr):
-        # Creating fake representations
-        fake_inputs = create_fake_samples(inputs)
-        _, fake_hidden_outputs = self.encoder(fake_inputs)
-        fake_repr = self.get_latent_representation(fake_hidden_outputs)
-
-        # The classifier checks if the representation is fake, so if it's fake
-        # the prediction should be 1, and if it's real it should be 0
-        real_repr_with_labels = [sample for sample in
-                                 zip(latent_repr,
-                                     [torch.tensor([1, 0])]*len(latent_repr))]
-
-        fake_repr_with_labels = [sample for sample in
-                                 zip(fake_repr,
-                                     [torch.tensor([0, 1])]*len(fake_repr))]
-
-        classifier_inputs = real_repr_with_labels + fake_repr_with_labels
-
-        random.shuffle(classifier_inputs)
-        combined_samples = torch.stack(
-            [sample for sample, _ in classifier_inputs])
-        combined_labels = torch.stack(
-            [label for _, label in classifier_inputs])
-
-        classified_labels = self._classifier(combined_samples)
-
-        classified_outputs = (classified_labels, combined_labels)
-        return classified_outputs
-
-    def forward(self, inputs):
-        # inputs of shape (Batch, Time Steps, Single step size)
-
-        _, hidden_outputs = self.encoder(inputs)
-        # hidden_outputs: list of length of layers * directions (6)
-        # each item of shape (dilation, batch, hidden size of layer)
-
-        latent_repr = self.get_latent_representation(hidden_outputs)
-        # latent_repr: (batch, latent_space_size)
-
-        prep_for_decoder = latent_repr.repeat(1, 1, 1).transpose(0, 1)
-        # prep_for_decoder: (batch, time steps [1], input size)
-
-        reconstructed_inputs = self.decoder(prep_for_decoder,
-                                            hidden=latent_repr.repeat(1, 1, 1))
-        # reconstructed_inputs have the same shape as the input
-
-        classified_outputs = self.classify_forward(inputs, latent_repr)
-
-        return inputs, latent_repr, reconstructed_inputs, classified_outputs
 
     def train_step(self, train_dl, test_dl):
         # Going over the batches
@@ -166,17 +75,14 @@ class DTCRModel(nn.Module):
         optimizer = self._config.optimizer(self.parameters(),
                                            eps=self._config.learning_rate)
 
-        self.train(mode=True)
         for index, (sample_data, sample_label) in enumerate(train_dl):
             optimizer.zero_grad()
 
-            inputs, latent_repr, reconstructed_inputs, classified_outputs =\
-                self(sample_data)
+            inputs, latent_repr, reconstructed_inputs, classified_outputs\
+                = self(sample_data)
 
             recons_loss = recons_criterion(reconstructed_inputs, inputs)
-            classify_loss = classify_criterion(
-                classified_outputs[0],
-                torch.max(classified_outputs[1], 1)[1])
+            classify_loss = classify_criterion(*classified_outputs)
 
             running_recons_loss += recons_loss.item()
             running_classify_loss += classify_loss.item()
@@ -194,7 +100,70 @@ class DTCRModel(nn.Module):
                 running_classify_loss = 0.0
                 running_recons_loss = 0.0
 
-        self.train(mode=False)
+    def forward(self, inputs):
+        # inputs of shape (Batch, Time Steps, Single step size)
+        latent_repr, hidden_output = self.encoder_forward(inputs)
+
+        # For decoding we also need a time-step dimension (which is 1)
+        # reconstructed_inputs will have the same shape as the input
+        latent_repr_for_decoding = latent_repr.repeat(1, 1, 1).transpose(0, 1)
+        reconstructed_inputs = self.decoder(latent_repr_for_decoding,
+                                            hidden=hidden_output)
+
+        classified_outputs = self.classify_forward(inputs, latent_repr)
+
+        return inputs, latent_repr, reconstructed_inputs, classified_outputs
+
+    def encoder_forward(self, inputs):
+        output, hidden_outputs = self.encoder(inputs)
+
+        last_outputs = [out[:, -1, :] for out in output]
+        latent_repr = torch.cat(last_outputs, dim=1)
+
+        # hidden_outputs: list of length of layers * directions (6)
+        # each is a list of length dilation of the layer
+        # and each item is a tensor of (batch, hidden size of layer)
+        latent_hidden = self._get_latent_hidden(hidden_outputs)
+        latent_hidden = latent_hidden.repeat(1, 1, 1)
+        # latent_hidden: (layers ,batch, latent_space_size)
+
+        return latent_repr, latent_hidden
+
+    def _get_latent_hidden(self, hidden_output):
+        latent_space_last_hidden_outputs = []
+        for layer_hidden_output in hidden_output:
+            latent_space_last_hidden_outputs.append(layer_hidden_output[-1])
+
+        # There are 6 layers (3 layers for each direction), which we
+        # combine for the latent hidden for the decoder
+        combined = torch.cat(latent_space_last_hidden_outputs, dim=2)
+        return combined
+
+    def classify_forward(self, inputs, latent_repr):
+        # Creating fake representations
+        fake_inputs = create_fake_samples(inputs)
+        fake_repr, _ = self.encoder_forward(fake_inputs)
+
+        # The classifier checks if the representation is fake, so if it's fake
+        # the prediction should be 1, and if it's real it should be 0
+        real_repr_with_labels = [(rep, torch.tensor([0])) for rep in
+                                 latent_repr]
+
+        fake_repr_with_labels = [(rep, torch.tensor([1])) for rep in
+                                 fake_repr]
+
+        classifier_inputs = real_repr_with_labels + fake_repr_with_labels
+
+        random.shuffle(classifier_inputs)
+        combined_samples = torch.stack(
+            [sample for sample, _ in classifier_inputs])
+        combined_labels = torch.cat(
+            [label for _, label in classifier_inputs], 0)
+
+        classified_labels = self.classifier(combined_samples)
+
+        classified_outputs = (classified_labels, combined_labels)
+        return classified_outputs
 
 
 class DTCRDecoder(nn.Module):
@@ -212,6 +181,7 @@ class DTCRDecoder(nn.Module):
             raise NotImplementedError
 
         self._number_of_units = sum(self._config.hidden_size) * 2
+        self._input_size = self._config.hidden_size[-1] * 2
 
         self._rnn = cell(self._number_of_units, self._number_of_units,
                          dropout=0, batch_first=True)

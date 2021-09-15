@@ -5,6 +5,7 @@ Implements a pytorch dilated RNN module.
 """
 
 import torch
+from torch.autograd import backward
 import torch.nn as nn
 
 
@@ -130,17 +131,17 @@ class BidirectionalDRNN(nn.Module):
     Class that trains 2 DRNNs simultaneously, one regularly and one
     with reversed inputs to make a bidirectional DRNN.
     """
-    def __init__(self, n_input, n_hidden, n_layers, dropout=0,
+    def __init__(self, n_input, n_hidden, dropout=0,
                  cell_type='GRU', batch_first=False, dilations=None):
         super(BidirectionalDRNN, self).__init__()
-        self._number_of_layers = n_layers
+        self._number_of_layers = len(n_hidden)
 
-        self._regular_drnn = DRNN(n_input, n_hidden, n_layers,
+        self._regular_drnn = DRNN(n_input, n_hidden,
                                   dropout=dropout, cell_type=cell_type,
                                   batch_first=batch_first,
                                   dilations=dilations)
 
-        self._backwards_drnn = DRNN(n_input, n_hidden, n_layers,
+        self._backwards_drnn = DRNN(n_input, n_hidden,
                                     dropout=dropout, cell_type=cell_type,
                                     batch_first=batch_first,
                                     dilations=dilations)
@@ -162,14 +163,14 @@ class BidirectionalDRNN(nn.Module):
         backwards_outputs, backwards_hidden = \
             self._backwards_drnn.forward(reversed_inputs, backwards_hidden)
 
-        backwards_outputs = backwards_outputs[-1]
-
         # We want the outputs to concatenate the same sample's outputs
         # so we need to reverse the outputs of the backwards network
-        backwards_outputs_reversed = self._reverse_inputs(backwards_outputs)
+        backwards_outputs_reversed = [
+            self._reverse_inputs(back_out) for back_out in backwards_outputs]
 
-        combined_outputs = torch.cat(
-            (regular_outputs[-1], backwards_outputs_reversed[-1]), dim=2)
+        combined_outputs = [
+            torch.cat([regular, backward], dim=2) for regular, backward
+            in zip(regular_outputs, backwards_outputs_reversed)]
 
         return combined_outputs, regular_hidden + backwards_hidden
 
