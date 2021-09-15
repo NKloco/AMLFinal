@@ -1,11 +1,11 @@
 """
+Implements a pytorch dilated RNN module and bidirectional dilated RNN module.
 Originally taken from
 https://github.com/zalandoresearch/pytorch-dilated-rnn/blob/master/drnn.py
-Implements a pytorch dilated RNN module.
+Heavily modified.
 """
 
 import torch
-from torch.autograd import backward
 import torch.nn as nn
 
 
