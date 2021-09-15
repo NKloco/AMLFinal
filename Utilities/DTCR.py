@@ -63,17 +63,13 @@ class DTCRModel(nn.Module):
             nn.Softmax(dim=1)
         )
 
-    def train_step(self, train_dl, test_dl):
+    def train_step(self, train_dl, test_dl,
+                   recons_criterion, classify_criterion, optimizer):
         # Going over the batches
         print_interval = self._config.training_printing_interval
         running_loss = 0.0
         running_recons_loss = 0.0
         running_classify_loss = 0.0
-
-        recons_criterion = self._config.decoding_criterion()
-        classify_criterion = self._config.classifier_criterion()
-        optimizer = self._config.optimizer(self.parameters(),
-                                           eps=self._config.learning_rate)
 
         for index, (sample_data, sample_label) in enumerate(train_dl):
             optimizer.zero_grad()
