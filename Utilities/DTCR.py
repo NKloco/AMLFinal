@@ -117,6 +117,7 @@ class DTCRModel(nn.Module):
     def encoder_forward(self, inputs):
         output, hidden_outputs = self.encoder(inputs)
 
+        # Concatenating the last hidden state output from each layer
         last_outputs = [out[:, -1, :] for out in output]
         latent_repr = torch.cat(last_outputs, dim=1)
 
