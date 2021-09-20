@@ -193,7 +193,7 @@ class DTCRDecoder(nn.Module):
             batch_size = inputs.shape[0]
 
             # Hidden is of (layers, batch_size, hidden_units)
-            hidden = torch.zeros(1, batch_size, self._number_of_units)
+            hidden = torch.zeros(1, batch_size, self._number_of_units, requires_grad=True)
 
         series_prediction = []
         rnn_out = inputs
@@ -229,6 +229,7 @@ def create_fake_sample(sample, time_steps_to_shuffle):
 
         fake_sample[0, random_index_to_swap] = swap_temp
 
+    fake_sample.requires_grad_(True)
     return fake_sample
 
 
