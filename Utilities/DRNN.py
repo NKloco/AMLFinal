@@ -57,7 +57,7 @@ class DRNN(nn.Module):
         if hidden is None:
             hidden = []
             for n_hidden, dilation in zip(self._n_layers, self._dilations):
-                hidden.append([torch.zeros(1, batch_size, n_hidden, requires_grad=True)]*dilation)
+                hidden.append([torch.zeros(1, batch_size, n_hidden)]*dilation)
 
         network_out = []
         network_hidden = []
@@ -117,14 +117,16 @@ class DRNN(nn.Module):
         combined_outputs = []
         for dilation_step in range(total_time_steps // dilation):
             dilation_index = torch.tensor([dilation_step])
-            step_outputs = [torch.index_select(time_step, 1, dilation_index) for time_step in outs]
+            step_outputs = [torch.index_select(time_step, 1, dilation_index)
+                            for time_step in outs]
             combined_outputs += step_outputs
 
         if total_time_steps % dilation != 0:
             rest = total_time_steps % dilation
             dilation_step += 1
             dilation_index = torch.tensor([dilation_step])
-            step_outputs = [torch.index_select(time_step, 1, dilation_index) for time_step in outs[:rest]]
+            step_outputs = [torch.index_select(time_step, 1, dilation_index)
+                            for time_step in outs[:rest]]
             combined_outputs += step_outputs
 
         out_tensor = torch.cat(combined_outputs, dim=1)

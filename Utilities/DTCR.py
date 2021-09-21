@@ -20,11 +20,11 @@ class DTCRConfig(object):
     batch_size = None
     num_steps = None  # Length of the time series
     class_num = None  # Number of different labels
-    learning_rate = 5e-3
+    learning_rate = 1e-3
     coefficient_lambda = 1
     de_noising = True
     sample_loss = True
-    training_printing_interval = 5
+    training_printing_interval = 1
     optimizer = torch.optim.Adam
 
     # Encoder Settings
@@ -193,7 +193,7 @@ class DTCRDecoder(nn.Module):
             batch_size = inputs.shape[0]
 
             # Hidden is of (layers, batch_size, hidden_units)
-            hidden = torch.zeros(1, batch_size, self._number_of_units, requires_grad=True)
+            hidden = torch.zeros(1, batch_size, self._number_of_units)
 
         series_prediction = []
         rnn_out = inputs
@@ -229,7 +229,6 @@ def create_fake_sample(sample, time_steps_to_shuffle):
 
         fake_sample[0, random_index_to_swap] = swap_temp
 
-    fake_sample.requires_grad_(True)
     return fake_sample
 
 
