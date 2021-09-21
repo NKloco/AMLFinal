@@ -98,42 +98,37 @@ class DTCRModel(nn.Module):
 
     def forward(self, inputs):
         # inputs of shape (Batch, Time Steps, Single step size)
-        latent_repr, hidden_output = self.encoder_forward(inputs)
+        latent_repr, _ = self.encoder_forward(inputs)
 
         # For decoding we also need a time-step dimension (which is 1)
-        # reconstructed_inputs will have the same shape as the input
-        latent_repr_for_decoding = latent_repr.repeat(1, 1, 1).transpose(0, 1)
-        reconstructed_inputs = self.decoder(latent_repr_for_decoding,
-                                            hidden=hidden_output)
+        # reconstructed_inputs will have the same shape as the inputs
+        decoder_input = latent_repr.expand(1, -1, -1).transpose(0, 1)
+        decoder_hidden = latent_repr.expand(1, -1, -1)
+        reconstructed_inputs = self.decoder(decoder_input,
+                                            hidden=decoder_hidden)
 
         classified_outputs = self.classify_forward(inputs, latent_repr)
 
         return inputs, latent_repr, reconstructed_inputs, classified_outputs
 
     def encoder_forward(self, inputs):
-        output, hidden_outputs = self.encoder(inputs)
+        _, hidden_outputs = self.encoder(inputs)
 
-        # Concatenating the last hidden state output from each layer
-        last_outputs = [out[:, -1, :] for out in output]
-        latent_repr = torch.cat(last_outputs, dim=1)
+        latent_repr = self._get_latent_repr(hidden_outputs)
+        # latent_repr: (batch, latent_space_size)
 
+        return latent_repr, hidden_outputs
+
+    def _get_latent_repr(self, hidden_output):
         # hidden_outputs: list of length of layers * directions (6)
         # each is a list of length dilation of the layer
         # and each item is a tensor of (batch, hidden size of layer)
-        latent_hidden = self._get_latent_hidden(hidden_outputs)
-        latent_hidden = latent_hidden.repeat(1, 1, 1)
-        # latent_hidden: (layers ,batch, latent_space_size)
-
-        return latent_repr, latent_hidden
-
-    def _get_latent_hidden(self, hidden_output):
         latent_space_last_hidden_outputs = []
         for layer_hidden_output in hidden_output:
+            # We take the last dilation for the hidden part
             latent_space_last_hidden_outputs.append(layer_hidden_output[-1])
 
-        # There are 6 layers (3 layers for each direction), which we
-        # combine for the latent hidden for the decoder
-        combined = torch.cat(latent_space_last_hidden_outputs, dim=2)
+        combined = torch.cat(latent_space_last_hidden_outputs, dim=1)
         return combined
 
     def classify_forward(self, inputs, latent_repr):

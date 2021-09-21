@@ -82,6 +82,11 @@ class DRNN(nn.Module):
             current_hidden = hidden[dilation_index]
             dilation_out, dilation_hidden = rnn_layer(current_input,
                                                       current_hidden)
+            # Since we use potential multilayered classes, the hidden is of
+            # shape [number of layers, batch, hidden size], when the number
+            # of layers is always 1 because this is a single layer forward.
+            # So this first dimension will be removed.
+            dilation_hidden = torch.squeeze(dilation_hidden, dim=0)
             outs.append(dilation_out)
             hiddens.append(dilation_hidden)
 
