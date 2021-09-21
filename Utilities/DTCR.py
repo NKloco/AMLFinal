@@ -6,6 +6,7 @@ import math
 import random
 import torch
 import torch.nn as nn
+import numpy as np
 from Utilities.DRNN import BidirectionalDRNN
 
 FAKE_SAMPLE_ALPHA = 0.2  # As set in the article
@@ -28,7 +29,7 @@ class DTCRConfig(object):
     optimizer = torch.optim.Adam
 
     # Encoder Settings
-    hidden_size = [50, 30, 30]
+    hidden_size = [100, 50, 50]
     dilations = [1, 4, 16]
     encoder_cell_type = 'GRU'
 
@@ -63,38 +64,49 @@ class DTCRModel(nn.Module):
             nn.Softmax(dim=1)
         )
 
+        F = torch.empty(self._config.batch_size, self._config.class_num)
+        self.F = torch.nn.init.orthogonal_(F)
+
     def train_step(self, train_dl, test_dl,
                    recons_criterion, classify_criterion, optimizer):
         # Going over the batches
         print_interval = self._config.training_printing_interval
+        clustering_lambda = self._config.coefficient_lambda
         running_loss = 0.0
         running_recons_loss = 0.0
         running_classify_loss = 0.0
+        running_clustering = 0.0
 
         for index, (sample_data, sample_label) in enumerate(train_dl):
             optimizer.zero_grad()
 
-            inputs, latent_repr, reconstructed_inputs, classified_outputs\
-                = self(sample_data)
+            inputs, latent_repr, reconstructed_inputs, classified_outputs,\
+                clustering_loss = self(sample_data)
 
             recons_loss = recons_criterion(reconstructed_inputs, inputs)
             classify_loss = classify_criterion(*classified_outputs)
 
             running_recons_loss += recons_loss.item()
             running_classify_loss += classify_loss.item()
-            dtcr_loss = recons_loss + classify_loss
+            running_clustering += clustering_loss.item()
+
+            clustering_loss = clustering_loss * clustering_lambda
+            dtcr_loss = recons_loss + classify_loss + clustering_loss
             dtcr_loss.backward()
             optimizer.step()
 
             running_loss += dtcr_loss.item()
             if index % print_interval == print_interval - 1:
-                print('[{}] loss: {}, classify: {}, recons: {}'.format(
-                    index + 1, running_loss / print_interval,
-                    running_classify_loss / print_interval,
-                    running_recons_loss / print_interval))
+                print(('[{}] loss: {:3f}, classify: {:3f}, recons: {:3f},' +
+                      'clustering: {:3f}').format(
+                        index + 1, running_loss / print_interval,
+                        running_classify_loss / print_interval,
+                        running_recons_loss / print_interval,
+                        running_clustering / print_interval))
                 running_loss = 0.0
                 running_classify_loss = 0.0
                 running_recons_loss = 0.0
+                running_clustering = 0.0
 
     def forward(self, inputs):
         # inputs of shape (Batch, Time Steps, Single step size)
@@ -109,7 +121,11 @@ class DTCRModel(nn.Module):
 
         classified_outputs = self.classify_forward(inputs, latent_repr)
 
-        return inputs, latent_repr, reconstructed_inputs, classified_outputs
+        clustering_loss = self._calculate_clustering_loss(latent_repr,
+                                                          should_update=True)
+
+        return inputs, latent_repr, reconstructed_inputs, classified_outputs,\
+            clustering_loss
 
     def encoder_forward(self, inputs):
         _, hidden_outputs = self.encoder(inputs)
@@ -156,6 +172,26 @@ class DTCRModel(nn.Module):
 
         classified_outputs = (classified_labels, combined_labels)
         return classified_outputs
+
+    def _calculate_clustering_loss(self, representations,
+                                   should_update=False):
+        # representations of shape [batch, latent space size]
+        # H will be of size [latent space, batch] as in the paper
+        H = representations.transpose(0, 1)
+        HTH = torch.matmul(H.transpose(0, 1), H)
+        FTHTH = torch.matmul(self.F.transpose(0, 1), HTH)
+        FTHTHF = torch.matmul(FTHTH, self.F)
+
+        clustering_loss = torch.trace(HTH) - torch.trace(FTHTHF)
+
+        if should_update:
+            np_H = H.detach().numpy()
+            U, sigma, VT = np.linalg.svd(np_H)
+            sorted_indices = np.argsort(sigma)
+            k_evecs = VT[sorted_indices[:-self._config.class_num - 1:-1], :]
+            self.F = torch.from_numpy(k_evecs.T)
+
+        return clustering_loss
 
 
 class DTCRDecoder(nn.Module):
