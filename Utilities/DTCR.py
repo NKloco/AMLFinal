@@ -20,7 +20,7 @@ class DTCRConfig(object):
     batch_size = None
     num_steps = None  # Length of the time series
     class_num = None  # Number of different labels
-    learning_rate = 1e-3
+    learning_rate = 5e-3
     coefficient_lambda = 1
     de_noising = True
     sample_loss = True
@@ -28,7 +28,7 @@ class DTCRConfig(object):
     optimizer = torch.optim.Adam
 
     # Encoder Settings
-    hidden_size = [100, 50, 50]
+    hidden_size = [50, 30, 30]
     dilations = [1, 4, 16]
     encoder_cell_type = 'GRU'
 
@@ -208,10 +208,8 @@ class DTCRDecoder(nn.Module):
 
 
 def create_fake_sample(sample, time_steps_to_shuffle):
-    fake_sample = torch.clone(sample)
-
     # The indices to shuffle
-    indices_to_shuffle = random.sample(range(fake_sample.shape[1]),
+    indices_to_shuffle = random.sample(range(len(sample)),
                                        time_steps_to_shuffle)
 
     while len(indices_to_shuffle) > 1:
@@ -221,32 +219,41 @@ def create_fake_sample(sample, time_steps_to_shuffle):
             random.randint(0, len(indices_to_shuffle) - 1)]
 
         # Swapping the items
-        swap_temp = torch.index_select(
-            fake_sample, 1, torch.tensor(last_index))
+        swap_temp = sample[last_index]
+        sample[last_index] = sample[random_index_to_swap]
+        sample[random_index_to_swap] = swap_temp
 
-        fake_sample[0, last_index] = torch.index_select(
-            fake_sample, 1, torch.tensor(random_index_to_swap))
-
-        fake_sample[0, random_index_to_swap] = swap_temp
-
-    return fake_sample
+    return sample
 
 
 def create_fake_samples(samples, fake_alpha=FAKE_SAMPLE_ALPHA):
     fake_samples = []
-
+    new_samples = samples.tolist()
     # samples of shape [batch, time steps, single step]
-    for single_sample in torch.split(samples, 1):
+    for single_series in new_samples:
         # The number of samples from the series to shuffle
-        time_steps_to_shuffle = math.floor(len(single_sample) * fake_alpha)
+        time_steps_to_shuffle = math.floor(len(single_series) * fake_alpha)
         fake_samples.append(
-            create_fake_sample(single_sample, time_steps_to_shuffle))
+            create_fake_sample(single_series, time_steps_to_shuffle))
 
-    return torch.cat(fake_samples)
+    return torch.tensor(fake_samples)
 
 
 def main():
     print("Testing the DTCR functionality...")
+    # the fake sample test is like a batch of 3 time series of 10 time steps
+    # with 1 dimensional sampling for each timestep.
+    fake_samples_test = torch.tensor([
+        [[1], [2], [3], [4], [5], [6], [7], [8], [9], [10]],
+        [[1], [2], [3], [4], [5], [6], [7], [8], [9], [10]],
+        [[1], [2], [3], [4], [5], [6], [7], [8], [9], [10]],
+    ])
+    fake_samples = create_fake_samples(fake_samples_test)
+    print("Original shape: {}, Fake shape: {}".format(
+        fake_samples_test.shape, fake_samples.shape))
+    for batch_instance in fake_samples:
+        print(",".join(
+            [str(time_step.item()) for time_step in batch_instance]))
     print("DTCR functionality finished testing.")
 
 
