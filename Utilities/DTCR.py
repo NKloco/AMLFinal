@@ -29,7 +29,7 @@ class DTCRConfig(object):
     batch_size = None
     num_steps = None  # Length of the time series
     class_num = None  # Number of different labels
-    learning_rate = 5e-3
+    learning_rate = 7e-3
     training_printing_interval = 1
     checkpoint_interval = 15
     checkpoint_path = "Checkpoints"
@@ -37,7 +37,7 @@ class DTCRConfig(object):
     optimizer = torch.optim.Adam
 
     # Encoder Settings
-    hidden_size = [50, 30, 30]
+    hidden_size = [100, 50, 50]
     dilations = [1, 4, 16]
     encoder_cell_type = 'GRU'
 
@@ -238,6 +238,10 @@ class DTCRModel(nn.Module):
     def _evaluate_model(self, test_data, test_labels):
         print("Evaluating Model:")
         true_labels = test_labels.numpy()
+
+        # If the labels are not 0 based I change them to be
+        if 0 not in true_labels:
+            true_labels -= 1
         data_repr, _ = self.encoder_forward(test_data)
         data_repr_numpy = data_repr.numpy()
         kmeans = KMeans(n_clusters=self._config.class_num).fit(data_repr_numpy)
@@ -257,17 +261,31 @@ class DTCRModel(nn.Module):
 
         # plotting the representations with the classes and the centers
         all_data = np.concatenate([data_repr_numpy, centers])
-        data_points = TSNE(n_components=2).fit_transform(all_data)
+        data_points = TSNE(n_components=2, init="pca").fit_transform(all_data)
 
         scatter_x = data_points[:, 0]
         scatter_y = data_points[:, 1]
         all_labels = np.concatenate([true_labels, center_labels])
+        all_predicted_labels = np.concatenate(
+            [predicted_labels, center_labels])
 
+        print("Plot with original labels:")
         fig, ax = plt.subplots()
         for c_label in range(center_label + 1):
             ix = np.where(all_labels == c_label)
+            brush_size = 50 if c_label == center_label else 20
             ax.scatter(scatter_x[ix], scatter_y[ix], c=DEFAULT_COLORS[c_label],
-                       label=c_label, s=100)
+                       label=c_label, s=brush_size)
+        ax.legend()
+        plt.show()
+
+        print("Plot with predicted labels (for kmeans and tsne sanity):")
+        fig, ax = plt.subplots()
+        for c_label in range(center_label + 1):
+            ix = np.where(all_predicted_labels == c_label)
+            brush_size = 50 if c_label == center_label else 20
+            ax.scatter(scatter_x[ix], scatter_y[ix], c=DEFAULT_COLORS[c_label],
+                       label=c_label, s=brush_size)
         ax.legend()
         plt.show()
 
