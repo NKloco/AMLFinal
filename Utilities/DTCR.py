@@ -7,9 +7,17 @@ import random
 import torch
 import torch.nn as nn
 import numpy as np
+import os
+import matplotlib.pyplot as plt
+
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
+from sklearn.metrics import rand_score, normalized_mutual_info_score
+
 from Utilities.DRNN import BidirectionalDRNN
 
 FAKE_SAMPLE_ALPHA = 0.2  # As set in the article
+DEFAULT_COLORS = ["red", "green", "blue", "purple", "orange", "yellow"]
 
 
 class DTCRConfig(object):
@@ -22,14 +30,14 @@ class DTCRConfig(object):
     num_steps = None  # Length of the time series
     class_num = None  # Number of different labels
     learning_rate = 5e-3
-    coefficient_lambda = 1
-    de_noising = True
-    sample_loss = True
     training_printing_interval = 1
+    checkpoint_interval = 15
+    checkpoint_path = "Checkpoints"
+    model_name = None
     optimizer = torch.optim.Adam
 
     # Encoder Settings
-    hidden_size = [100, 50, 50]
+    hidden_size = [50, 30, 30]
     dilations = [1, 4, 16]
     encoder_cell_type = 'GRU'
 
@@ -40,6 +48,10 @@ class DTCRConfig(object):
     # Classifier Settings
     classifier_nodes = 128
     classifier_criterion = nn.CrossEntropyLoss
+
+    # Clustering Settings
+    f_update_interval = 10
+    coefficient_lambda = 1
 
 
 class DTCRModel(nn.Module):
@@ -67,9 +79,15 @@ class DTCRModel(nn.Module):
         F = torch.empty(self._config.batch_size, self._config.class_num)
         self.F = torch.nn.init.orthogonal_(F)
 
+        self._training_iteration = 0
+
     def train_step(self, train_dl, test_dl,
                    recons_criterion, classify_criterion, optimizer):
-        # Going over the batches
+        # This is used for the F update, model checkpoint, and graph making
+        self._training_iteration += 1
+        iteration = self._training_iteration
+        should_update_F = (iteration % self._config.f_update_interval == 0)
+
         print_interval = self._config.training_printing_interval
         clustering_lambda = self._config.coefficient_lambda
         running_loss = 0.0
@@ -77,29 +95,40 @@ class DTCRModel(nn.Module):
         running_classify_loss = 0.0
         running_clustering = 0.0
 
-        for index, (sample_data, sample_label) in enumerate(train_dl):
+        # Training over the data once
+        for index, (sample_data, _) in enumerate(train_dl):
+            # Zeros the gradients for the next forward
             optimizer.zero_grad()
 
-            inputs, latent_repr, reconstructed_inputs, classified_outputs,\
-                clustering_loss = self(sample_data)
+            # Forward of the model, makes latent space representations,
+            # creates fake samples and classify them, anc calculates the
+            # clustering loss
+            _, reconstructed_inputs, classified_outputs, clustering_loss\
+                = self(sample_data, should_update_f=should_update_F)
 
-            recons_loss = recons_criterion(reconstructed_inputs, inputs)
+            recons_loss = recons_criterion(reconstructed_inputs, sample_data)
             classify_loss = classify_criterion(*classified_outputs)
 
+            # The clustering loss contributes only lambda to the whole loss
+            lambda_clustering_loss = clustering_loss * clustering_lambda
+            dtcr_loss = recons_loss + classify_loss + lambda_clustering_loss
+
+            # Backwards of the network
+            dtcr_loss.backward()
+
+            # Optimization step
+            optimizer.step()
+
+            # Information logging
             running_recons_loss += recons_loss.item()
             running_classify_loss += classify_loss.item()
             running_clustering += clustering_loss.item()
-
-            clustering_loss = clustering_loss * clustering_lambda
-            dtcr_loss = recons_loss + classify_loss + clustering_loss
-            dtcr_loss.backward()
-            optimizer.step()
-
             running_loss += dtcr_loss.item()
             if index % print_interval == print_interval - 1:
-                print(('[{}] loss: {:3f}, classify: {:3f}, recons: {:3f},' +
-                      'clustering: {:3f}').format(
-                        index + 1, running_loss / print_interval,
+                print(('[{}|{}] loss: {:.4f}, classify: {:.5f},' +
+                       'recons: {:.5f}, clustering: {:.5f}').format(
+                        iteration, index + 1,
+                        running_loss / print_interval,
                         running_classify_loss / print_interval,
                         running_recons_loss / print_interval,
                         running_clustering / print_interval))
@@ -108,7 +137,14 @@ class DTCRModel(nn.Module):
                 running_recons_loss = 0.0
                 running_clustering = 0.0
 
-    def forward(self, inputs):
+        # After training, we might want to test
+        if iteration % self._config.checkpoint_interval == 0:
+            self._make_checkpoint()
+            with torch.no_grad():
+                for test_data, test_label in test_dl:
+                    self._evaluate_model(test_data, test_label)
+
+    def forward(self, inputs, should_update_f=False):
         # inputs of shape (Batch, Time Steps, Single step size)
         latent_repr, _ = self.encoder_forward(inputs)
 
@@ -121,10 +157,10 @@ class DTCRModel(nn.Module):
 
         classified_outputs = self.classify_forward(inputs, latent_repr)
 
-        clustering_loss = self._calculate_clustering_loss(latent_repr,
-                                                          should_update=True)
+        clustering_loss = self._calculate_clustering_loss(
+            latent_repr, should_update=should_update_f)
 
-        return inputs, latent_repr, reconstructed_inputs, classified_outputs,\
+        return latent_repr, reconstructed_inputs, classified_outputs,\
             clustering_loss
 
     def encoder_forward(self, inputs):
@@ -192,6 +228,48 @@ class DTCRModel(nn.Module):
             self.F = torch.from_numpy(k_evecs.T)
 
         return clustering_loss
+
+    def _make_checkpoint(self):
+        checkpoint_name = "{}_{}".format(self._config.model_name,
+                                         self._training_iteration)
+        path = os.path.join(self._config.checkpoint_path, checkpoint_name)
+        torch.save(self, path)
+
+    def _evaluate_model(self, test_data, test_labels):
+        print("Evaluating Model:")
+        true_labels = test_labels.numpy()
+        data_repr, _ = self.encoder_forward(test_data)
+        data_repr_numpy = data_repr.numpy()
+        kmeans = KMeans(n_clusters=self._config.class_num).fit(data_repr_numpy)
+        predicted_labels = kmeans.labels_
+        centers = kmeans.cluster_centers_
+
+        # The label is the number of classes, because the classes start at 0
+        center_label = self._config.class_num
+        DEFAULT_COLORS[center_label] = "black"
+        center_labels = np.asarray([center_label]*self._config.class_num)
+
+        # Calculating the rand index and normalized mutual information to
+        # evaluate the model
+        rand_index = rand_score(true_labels, predicted_labels)
+        nmi = normalized_mutual_info_score(true_labels, predicted_labels)
+        print("RI: {}, NMI: {}".format(rand_index, nmi))
+
+        # plotting the representations with the classes and the centers
+        all_data = np.concatenate([data_repr_numpy, centers])
+        data_points = TSNE(n_components=2).fit_transform(all_data)
+
+        scatter_x = data_points[:, 0]
+        scatter_y = data_points[:, 1]
+        all_labels = np.concatenate([true_labels, center_labels])
+
+        fig, ax = plt.subplots()
+        for c_label in range(center_label + 1):
+            ix = np.where(all_labels == c_label)
+            ax.scatter(scatter_x[ix], scatter_y[ix], c=DEFAULT_COLORS[c_label],
+                       label=c_label, s=100)
+        ax.legend()
+        plt.show()
 
 
 class DTCRDecoder(nn.Module):
