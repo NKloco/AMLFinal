@@ -16,7 +16,7 @@ from sklearn.metrics import rand_score, normalized_mutual_info_score
 
 from Utilities.DRNN import BidirectionalDRNN
 
-FAKE_SAMPLE_ALPHA = 0.2  # As set in the article
+FAKE_SAMPLE_ALPHA = 0.3  # As set in the article
 DEFAULT_COLORS = ["red", "green", "blue", "purple", "orange", "yellow"]
 
 
@@ -29,16 +29,16 @@ class DTCRConfig(object):
     batch_size = None
     num_steps = None  # Length of the time series
     class_num = None  # Number of different labels
-    learning_rate = 7e-3
+    learning_rate = 5e-3
     training_printing_interval = 1
-    checkpoint_interval = 15
+    checkpoint_interval = 30
     checkpoint_path = "Checkpoints"
     model_name = None
     optimizer = torch.optim.Adam
 
     # Encoder Settings
     hidden_size = [100, 50, 50]
-    dilations = [1, 4, 16]
+    dilations = [1, 2, 4]
     encoder_cell_type = 'GRU'
 
     # Decoder Settings
@@ -51,7 +51,7 @@ class DTCRConfig(object):
 
     # Clustering Settings
     f_update_interval = 10
-    coefficient_lambda = 1
+    coefficient_lambda = 0.1
 
 
 class DTCRModel(nn.Module):
@@ -261,7 +261,7 @@ class DTCRModel(nn.Module):
 
         # plotting the representations with the classes and the centers
         all_data = np.concatenate([data_repr_numpy, centers])
-        data_points = TSNE(n_components=2, init="pca").fit_transform(all_data)
+        data_points = TSNE(n_components=2).fit_transform(all_data)
 
         scatter_x = data_points[:, 0]
         scatter_y = data_points[:, 1]
