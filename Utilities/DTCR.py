@@ -261,7 +261,8 @@ class DTCRModel(nn.Module):
 
         # plotting the representations with the classes and the centers
         all_data = np.concatenate([data_repr_numpy, centers])
-        data_points = TSNE(n_components=2).fit_transform(all_data)
+        data_points = TSNE(
+            n_components=self._config.class_num).fit_transform(all_data)
 
         scatter_x = data_points[:, 0]
         scatter_y = data_points[:, 1]
