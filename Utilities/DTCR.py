@@ -17,7 +17,8 @@ from sklearn.metrics import rand_score, normalized_mutual_info_score
 from Utilities.DRNN import BidirectionalDRNN
 
 FAKE_SAMPLE_ALPHA = 0.3  # As set in the article
-DEFAULT_COLORS = ["red", "green", "blue", "purple", "orange", "yellow"]
+DEFAULT_COLORS = ["red", "green", "blue", "purple", "orange",
+                  "yellow", "brown"]
 
 
 class DTCRConfig(object):
@@ -53,6 +54,9 @@ class DTCRConfig(object):
     f_update_interval = 10
     coefficient_lambda = 0.1
 
+    # Attention
+    num_heads = 10
+
 
 class DTCRModel(nn.Module):
     def __init__(self, config):
@@ -61,12 +65,7 @@ class DTCRModel(nn.Module):
         self._config = config
         self._latent_space_size = sum(self._config.hidden_size) * 2
 
-        self.encoder = \
-            BidirectionalDRNN(self._config.input_size,
-                              self._config.hidden_size,
-                              cell_type=self._config.encoder_cell_type,
-                              batch_first=True,
-                              dilations=self._config.dilations)
+        self.encoder = self.get_encoder()
 
         self.decoder = DTCRDecoder(self._config)
         self.classifier = nn.Sequential(
@@ -80,6 +79,13 @@ class DTCRModel(nn.Module):
         self.F = torch.nn.init.orthogonal_(F)
 
         self._training_iteration = 0
+
+    def get_encoder(self):
+        return BidirectionalDRNN(self._config.input_size,
+                                 self._config.hidden_size,
+                                 cell_type=self._config.encoder_cell_type,
+                                 batch_first=True,
+                                 dilations=self._config.dilations)
 
     def train_step(self, train_dl, test_dl,
                    recons_criterion, classify_criterion, optimizer):
@@ -262,7 +268,8 @@ class DTCRModel(nn.Module):
         # plotting the representations with the classes and the centers
         all_data = np.concatenate([data_repr_numpy, centers])
         data_points = TSNE(
-            n_components=self._config.class_num).fit_transform(all_data)
+            n_components=self._config.class_num,
+            method='exact').fit_transform(all_data)
 
         scatter_x = data_points[:, 0]
         scatter_y = data_points[:, 1]
