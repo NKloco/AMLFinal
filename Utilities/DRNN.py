@@ -45,7 +45,7 @@ class DRNN(nn.Module):
 
         # This is so the model could access the layers parameters, if saved
         # as a list it cannot access them
-        self._layers = nn.Sequential(*rnn_layers)
+        self._layers = nn.ModuleList(rnn_layers)
 
     def forward(self, inputs, hidden=None):
         # inputs: (batch, time steps, input size)

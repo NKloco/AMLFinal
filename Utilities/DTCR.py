@@ -56,6 +56,8 @@ class DTCRConfig(object):
 
     # Attention
     num_heads = 10
+    attention_layers = 6
+    attention_ff_dim = 1024
 
 
 class DTCRModel(nn.Module):
